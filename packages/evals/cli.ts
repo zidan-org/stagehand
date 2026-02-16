@@ -383,6 +383,7 @@ function handleRun(args: string[]): void {
         webvoyager: "agent/webvoyager",
         osworld: "agent/osworld",
         onlineMind2Web: "agent/onlineMind2Web",
+        webtailbench: "agent/webtailbench",
       };
 
       evalName = benchmarkMap[benchmarkName];
