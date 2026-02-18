@@ -9,5 +9,6 @@ export * from "./model";
 export * from "./options";
 export * from "./page";
 export * from "./sdkErrors";
+export * from "./context";
 export { AISdkClient } from "../../external_clients/aisdk";
 export { CustomOpenAIClient } from "../../external_clients/customOpenAI";
