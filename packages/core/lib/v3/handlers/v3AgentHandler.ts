@@ -37,10 +37,32 @@ import {
   StreamingCallbacksInNonStreamingModeError,
   AgentAbortError,
 } from "../types/public/sdkErrors";
-import { handleCloseToolCall } from "../agent/utils/handleCloseToolCall";
+import { handleDoneToolCall } from "../agent/utils/handleDoneToolCall";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Prepends a system message with cache control to the messages array.
+ * The cache control providerOptions are used by Anthropic and ignored by other providers.
+ */
+function prependSystemMessage(
+  systemPrompt: string,
+  messages: ModelMessage[],
+): ModelMessage[] {
+  return [
+    {
+      role: "system",
+      content: systemPrompt,
+      providerOptions: {
+        anthropic: {
+          cacheControl: { type: "ephemeral" },
+        },
+      },
+    },
+    ...messages,
+  ];
 }
 
 export class V3AgentHandler {
@@ -115,6 +137,18 @@ export class V3AgentHandler {
         },
       });
 
+      if (
+        this.mode === "hybrid" &&
+        !baseModel.modelId.includes("gemini-3-flash") &&
+        !baseModel.modelId.includes("claude")
+      ) {
+        this.logger({
+          category: "agent",
+          message: `Warning: "${baseModel.modelId}" may not perform well in hybrid mode. See recommended models: https://docs.stagehand.dev/v3/basics/agent#hybrid-mode`,
+          level: 0,
+        });
+      }
+
       return {
         options,
         maxSteps,
@@ -173,13 +207,13 @@ export class V3AgentHandler {
             });
           }
 
-          if (toolCall.toolName === "close") {
+          if (toolCall.toolName === "done") {
             state.completed = true;
             if (args?.taskComplete) {
-              const closeReasoning = args.reasoning;
+              const doneReasoning = args.reasoning;
               const allReasoning = state.collectedReasoning.join(" ");
-              state.finalMessage = closeReasoning
-                ? `${allReasoning} ${closeReasoning}`.trim()
+              state.finalMessage = doneReasoning
+                ? `${allReasoning} ${doneReasoning}`.trim()
                 : allReasoning || "Task completed successfully";
             }
           }
@@ -279,8 +313,7 @@ export class V3AgentHandler {
 
       const result = await this.llmClient.generateText({
         model: wrappedModel,
-        system: systemPrompt,
-        messages,
+        messages: prependSystemMessage(systemPrompt, messages),
         tools: allTools,
         stopWhen: (result) => this.handleStop(result, maxSteps),
         temperature: 1,
@@ -299,7 +332,7 @@ export class V3AgentHandler {
       });
 
       const allMessages = [...messages, ...(result.response?.messages || [])];
-      const closeResult = await this.ensureClosed(
+      const doneResult = await this.ensureDone(
         state,
         wrappedModel,
         allMessages,
@@ -311,10 +344,10 @@ export class V3AgentHandler {
       return this.consolidateMetricsAndResult(
         startTime,
         state,
-        closeResult.messages,
+        doneResult.messages,
         result,
         maxSteps,
-        closeResult.output,
+        doneResult.output,
       );
     } catch (error) {
       // Re-throw validation errors that should propagate to the caller
@@ -404,8 +437,7 @@ export class V3AgentHandler {
 
     const streamResult = this.llmClient.streamText({
       model: wrappedModel,
-      system: systemPrompt,
-      messages,
+      messages: prependSystemMessage(systemPrompt, messages),
       tools: allTools,
       stopWhen: (result) => this.handleStop(result, maxSteps),
       temperature: 1,
@@ -425,21 +457,21 @@ export class V3AgentHandler {
         }
 
         const allMessages = [...messages, ...(event.response?.messages || [])];
-        this.ensureClosed(
+        this.ensureDone(
           state,
           wrappedModel,
           allMessages,
           options.instruction,
           options.output,
           this.logger,
-        ).then((closeResult) => {
+        ).then((doneResult) => {
           const result = this.consolidateMetricsAndResult(
             startTime,
             state,
-            closeResult.messages,
+            doneResult.messages,
             event,
             maxSteps,
-            closeResult.output,
+            doneResult.output,
           );
           resolveResult(result);
         });
@@ -475,7 +507,7 @@ export class V3AgentHandler {
     inputMessages: ModelMessage[],
     result: {
       text?: string;
-      usage?: LanguageModelUsage;
+      totalUsage?: LanguageModelUsage;
       response?: { messages?: ModelMessage[] };
       steps?: StepResult<ToolSet>[];
     },
@@ -499,13 +531,13 @@ export class V3AgentHandler {
 
     const endTime = Date.now();
     const inferenceTimeMs = endTime - startTime;
-    if (result.usage) {
+    if (result.totalUsage) {
       this.v3.updateMetrics(
         V3FunctionName.AGENT,
-        result.usage.inputTokens || 0,
-        result.usage.outputTokens || 0,
-        result.usage.reasoningTokens || 0,
-        result.usage.cachedInputTokens || 0,
+        result.totalUsage.inputTokens || 0,
+        result.totalUsage.outputTokens || 0,
+        result.totalUsage.reasoningTokens || 0,
+        result.totalUsage.cachedInputTokens || 0,
         inferenceTimeMs,
       );
     }
@@ -516,12 +548,12 @@ export class V3AgentHandler {
       actions: state.actions,
       completed: state.completed,
       output,
-      usage: result.usage
+      usage: result.totalUsage
         ? {
-            input_tokens: result.usage.inputTokens || 0,
-            output_tokens: result.usage.outputTokens || 0,
-            reasoning_tokens: result.usage.reasoningTokens || 0,
-            cached_input_tokens: result.usage.cachedInputTokens || 0,
+            input_tokens: result.totalUsage.inputTokens || 0,
+            output_tokens: result.totalUsage.outputTokens || 0,
+            reasoning_tokens: result.totalUsage.reasoningTokens || 0,
+            cached_input_tokens: result.totalUsage.cachedInputTokens || 0,
             inference_time_ms: inferenceTimeMs,
           }
         : undefined,
@@ -546,17 +578,17 @@ export class V3AgentHandler {
     maxSteps: number,
   ): boolean | PromiseLike<boolean> {
     const lastStep = result.steps[result.steps.length - 1];
-    if (lastStep?.toolCalls?.some((tc) => tc.toolName === "close")) {
+    if (lastStep?.toolCalls?.some((tc) => tc.toolName === "done")) {
       return true;
     }
     return stepCountIs(maxSteps)(result);
   }
 
   /**
-   * Ensures the close tool is called at the end of agent execution.
-   * Returns the messages and any extracted output from the close call.
+   * Ensures the done tool is called at the end of agent execution.
+   * Returns the messages and any extracted output from the done call.
    */
-  private async ensureClosed(
+  private async ensureDone(
     state: AgentState,
     model: LanguageModel,
     messages: ModelMessage[],
@@ -566,7 +598,7 @@ export class V3AgentHandler {
   ): Promise<{ messages: ModelMessage[]; output?: Record<string, unknown> }> {
     if (state.completed) return { messages };
 
-    const closeResult = await handleCloseToolCall({
+    const doneResult = await handleDoneToolCall({
       model,
       inputMessages: messages,
       instruction,
@@ -574,32 +606,32 @@ export class V3AgentHandler {
       logger,
     });
 
-    state.completed = closeResult.taskComplete;
-    state.finalMessage = closeResult.reasoning;
+    state.completed = doneResult.taskComplete;
+    state.finalMessage = doneResult.reasoning;
 
-    const closeAction = mapToolResultToActions({
-      toolCallName: "close",
+    const doneAction = mapToolResultToActions({
+      toolCallName: "done",
       toolResult: {
         success: true,
-        reasoning: closeResult.reasoning,
-        taskComplete: closeResult.taskComplete,
+        reasoning: doneResult.reasoning,
+        taskComplete: doneResult.taskComplete,
       },
       args: {
-        reasoning: closeResult.reasoning,
-        taskComplete: closeResult.taskComplete,
+        reasoning: doneResult.reasoning,
+        taskComplete: doneResult.taskComplete,
       },
-      reasoning: closeResult.reasoning,
+      reasoning: doneResult.reasoning,
     });
 
-    for (const action of closeAction) {
+    for (const action of doneAction) {
       action.pageUrl = state.currentPageUrl;
       action.timestamp = Date.now();
       state.actions.push(action);
     }
 
     return {
-      messages: [...messages, ...closeResult.messages],
-      output: closeResult.output,
+      messages: [...messages, ...doneResult.messages],
+      output: doneResult.output,
     };
   }
 
@@ -610,7 +642,7 @@ export class V3AgentHandler {
     try {
       const page = await this.v3.context.awaitActivePage();
       const screenshot = await page.screenshot({ fullPage: false });
-      this.v3.bus.emit("agent_screensot_taken_event", screenshot);
+      this.v3.bus.emit("agent_screenshot_taken_event", screenshot);
     } catch (error) {
       this.logger({
         category: "agent",

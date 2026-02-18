@@ -28,6 +28,11 @@ export type AgentCacheContext = {
   variables?: Record<string, string>;
 };
 
+export type AgentCacheTransferPayload = {
+  cacheKey: string;
+  entry: CachedAgentEntry;
+};
+
 export type AgentCacheDeps = {
   storage: CacheStorage;
   logger: Logger;
@@ -38,6 +43,7 @@ export type AgentCacheDeps = {
   getSystemPrompt: () => string | undefined;
   domSettleTimeoutMs?: number;
   act: ActFn;
+  bufferLatestEntry?: boolean;
 };
 
 export type ActCacheContext = {

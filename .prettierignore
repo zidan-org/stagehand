@@ -17,3 +17,6 @@ packages/docs/
 .browserbase/**
 **/.browserbase/
 **/.browserbase/**
+stainless.yml
+packages/server/openapi*.yaml
+packages/server/openapi*.yml

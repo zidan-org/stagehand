@@ -310,7 +310,7 @@ export interface AgentExecuteOptionsBase {
    * - `screenshot` - Take a screenshot
    * - `think` - Agent reasoning/planning step
    * - `wait` - Wait for time or condition
-   * - `close` - Mark task as complete
+   * - `done` - Mark task as complete
    * - `search` - Web search (requires BRAVE_API_KEY)
    *
    * **Hybrid mode:**
@@ -329,7 +329,7 @@ export interface AgentExecuteOptionsBase {
    * - `screenshot` - Take screenshot
    * - `think` - Agent reasoning step
    * - `wait` - Wait for time/condition
-   * - `close` - Mark task complete
+   * - `done` - Mark task complete
    * - `search` - Web search (requires BRAVE_API_KEY)
    *
    * @experimental
@@ -345,7 +345,7 @@ export interface AgentExecuteOptionsBase {
   excludeTools?: string[];
   /**
    * A Zod schema defining custom output data to return when the task completes.
-   * The agent will populate this data in the final close tool call.
+   * The agent will populate this data in the final done tool call.
    *
    * @experimental
    * @example
@@ -425,10 +425,13 @@ export const AVAILABLE_CUA_MODELS = [
   "openai/computer-use-preview-2025-03-11",
   "anthropic/claude-3-7-sonnet-latest",
   "anthropic/claude-opus-4-5-20251101",
+  "anthropic/claude-opus-4-6",
   "anthropic/claude-haiku-4-5-20251001",
   "anthropic/claude-sonnet-4-20250514",
   "anthropic/claude-sonnet-4-5-20250929",
   "google/gemini-2.5-computer-use-preview-10-2025",
+  "google/gemini-3-flash-preview",
+  "google/gemini-3-pro-preview",
   "microsoft/fara-7b",
 ] as const;
 export type AvailableCuaModel = (typeof AVAILABLE_CUA_MODELS)[number];
@@ -724,10 +727,13 @@ export interface FillFormVisionToolResult {
   screenshotBase64?: string;
 }
 
-export interface ScrollVisionToolResult {
+export interface ScrollToolResult {
   success: boolean;
   message: string;
   scrolledPixels: number;
+}
+
+export interface ScrollVisionToolResult extends ScrollToolResult {
   screenshotBase64?: string;
 }
 
