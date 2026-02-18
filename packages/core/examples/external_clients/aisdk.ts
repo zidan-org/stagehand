@@ -85,9 +85,7 @@ export class AISdkClient extends LLMClient {
       const response = await generateText({
         model: this.model,
         messages: formattedMessages,
-        output: Output.object({
-          schema: options.response_model.schema,
-        }),
+        output: Output.object({ schema: options.response_model.schema }),
       });
 
       const usage = response.usage;
